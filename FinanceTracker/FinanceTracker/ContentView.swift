@@ -25,7 +25,6 @@ struct ContentView: View {
                     .tabItem {
                         Image(systemName: "gear")
                     }.tag(2)
-               
            }.tint(.green)
         }
     }

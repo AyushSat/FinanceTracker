@@ -26,121 +26,28 @@ struct SettingsView: View {
         }
         return .white
     }
-    
-    @AppStorage("categories") var jsonCategories = "[\"Groceries\", \"Rent\", \"Essentials\", \"Dining\", \"Recreation\"]"
-    @AppStorage("monthlyLimit") var monthlyLimitAppStorage = 0.0
-    @AppStorage("jsonTransactions") var jsonTransactions = "[]"
 
     @State private var newCategoryName:String = ""
     @State private var spendingLimitInput:String = ""
+    @State private var passwordInput:String = ""
     
     @State private var monthlyLimitInput:Double = 0.0
     @State private var showLimitAlert = false
     @State private var showCategoryConfirmation = false
+    @State private var showPublishConfirmation = false
+    @State private var showPullConfirmation = false
+    @State private var pullErrorState = 0
+    @State private var publishErrorState = 0
+    
+    @StateObject private var singleton = FirebaseConnector.singleton
     
     private var transactions: [Transaction] {
         
-        if let transactionData = jsonTransactions.data(using: .utf8) {
-            do{
-                let decoder = JSONDecoder()
-                let decodedTransactions: [Transaction] = try decoder.decode([Transaction].self, from: transactionData)
-                return decodedTransactions
-            } catch {
-                print("Error decoding JSON: \(error)")
-            }
-        }
-        return []
-    }
-    
-    func deepCopyCategories(_ originalCategories: [Category]) -> [Category] {
-        return originalCategories.map { category in
-            Category(id: UUID(), name: category.name)
-        }
-    }
-    
-    func submitMonthlyLimit(_ s: String){
-        if let casted = Double(s) {
-            monthlyLimitAppStorage = casted
-        } else {
-            print("Error, invalid double in string")
-        }
-        showLimitAlert = true
-    }
-    
-    func submitCategory(_ c: Category){
-        var tempCategories = deepCopyCategories(categories)
-        tempCategories.append(c)
-        let newStringArrOnly: [String] = tempCategories.map{$0.name}
-        do{
-            let encoder = JSONEncoder()
-            let jsonCategoriesData = try encoder.encode(newStringArrOnly)
-            if let jsonString = String(data: jsonCategoriesData, encoding: .utf8) {
-                jsonCategories = jsonString
-            }
-            showCategoryConfirmation = true
-        }catch {
-            print("Error encoding JSON: \(error)")
-        }
-        
-        
-        
+        return singleton.transactions
     }
     
     private var categories: [Category] {
-        if let jsonData = jsonCategories.data(using: .utf8) {
-            do {
-                let decoder = JSONDecoder()
-                let decodedCategories = try decoder.decode([String].self, from: jsonData)
-                return decodedCategories.map { Category(id: UUID(), name: $0) }
-            } catch {
-                print("Error decoding JSON: \(error)")
-            }
-        }
-        return []
-        
-    }
-    
-    func deleteCategory(_ name: String) -> Void {
-        print("Deleting category " + name)
-        var newArr:[Category] = []
-        for category in categories {
-            if category.name != name {
-                newArr.append(category)
-            }
-        }
-        let newStringArrOnly: [String] = newArr.map{$0.name}
-        do{
-            let encoder = JSONEncoder()
-            let jsonCategoriesData = try encoder.encode(newStringArrOnly)
-            if let jsonString = String(data: jsonCategoriesData, encoding: .utf8) {
-                jsonCategories = jsonString
-            }
-            
-            //rewrite all transactions with deleted category to "Other"
-            var newTransactions:[Transaction] = []
-            
-            for transaction in transactions{
-                if(transaction.cat != name){
-                    newTransactions.append(transaction)
-                }else{
-                    newTransactions.append(Transaction(id: transaction.id, name: transaction.name, date: transaction.date, cat: "Other", cost: transaction.cost))
-                }
-            }
-            
-            do {
-                let encoder = JSONEncoder()
-                let jsonData = try encoder.encode(newTransactions)
-                if let jsonString = String(data: jsonData, encoding: .utf8) {
-                    jsonTransactions = jsonString
-                }
-            } catch {
-                print("Error encoding JSON: \(error)")
-            }
-            
-            
-        }catch {
-            print("Error encoding JSON: \(error)")
-        }
+        return singleton.categories
     }
     
     var body: some View {
@@ -153,6 +60,145 @@ struct SettingsView: View {
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 18)
                     
                     Group{
+                        
+                        Group{
+                            Text("Load data from cloud")
+                                .padding(.top, 10.0)
+                                .frame(maxWidth: .infinity,
+                                       alignment: .leading)
+                            HStack{
+                                Text("Password")
+                                    .padding(.trailing, 12.0)
+                                
+                                TextField(singleton.getPassword() == "" ? "Enter password" : singleton.getPassword(), text: $passwordInput)
+                                    .multilineTextAlignment(.trailing)
+                                
+                            }.padding(12)
+                                .padding(.leading, 5)
+                                .background(inputBackgroundColor)
+                                .cornerRadius(10)
+                            
+                            HStack {
+                                Button(action: {
+                                    Task {
+                                        do {
+                                            let res = try await singleton.publishData(newPassword: passwordInput)
+                                            if res {
+                                                showPublishConfirmation = true
+                                                publishErrorState = 2
+                                            } else {
+                                                print("Something went wrong, check logs")
+                                                showPublishConfirmation = true
+                                                publishErrorState = 1
+                                            }
+                                        } catch {
+                                            publishErrorState = 1
+                                        }
+                                    }
+                                }) {
+                                    HStack {
+                                        Spacer()
+                                        Text("Publish data").foregroundColor(.white)
+                                            .font(.headline)
+                                            .padding(.vertical, 10.0)
+                                        
+                                        Spacer()
+                                    }.background(.blue)
+                                        .cornerRadius(10)
+                                }.alert(isPresented: $showPublishConfirmation, content: {
+                                    if(publishErrorState == 1){
+                                        publishErrorState = 0
+                                        return Alert(
+                                            title: Text("Creation failed"),
+                                            message: Text("An error occured when trying to publish that password to the cloud. Please try again later."),
+                                            dismissButton: .default(Text("OK")){
+                                                passwordInput = ""
+                                            }
+                                        )
+                                    }else if(publishErrorState == 2){
+                                        publishErrorState = 0
+                                        return Alert(
+                                            title: Text("Account created"),
+                                            message: Text("An account accessible with the password \(passwordInput) was created, and all existing transaction data has been synced with that password."),
+                                            dismissButton: .default(Text("OK")){
+                                                passwordInput = ""
+                                            }
+                                        )
+                                    }else{
+                                        publishErrorState = 0
+                                        return Alert(
+                                            title: Text("wtf"),
+                                            message: Text("wtf."),
+                                            dismissButton: .default(Text("OK")){
+                                                passwordInput = ""
+                                            }
+                                        )
+                                    }
+                                })
+                                
+                                Rectangle().fill(backgroundColorLocal).frame(width: 8, height: 2)
+                                
+                                Button(action: {
+                                    
+                                    Task {
+                                        do {
+                                            let res = try await singleton.pullData(newPassword: passwordInput)
+                                            if res {
+                                                showPullConfirmation = true
+                                                pullErrorState = 2
+                                            } else {
+                                                showPullConfirmation = true
+                                                pullErrorState = 1
+                                            }
+                                        } catch {
+                                            showPullConfirmation = true
+                                            pullErrorState = 1
+                                            // Handle error if something goes wrong
+                                        }
+                                    }
+                                }) {
+                                    HStack {
+                                        Spacer()
+                                        Text("Pull existing data").foregroundColor(.white)
+                                            .font(.headline)
+                                            .padding(.vertical, 10.0)
+                                        
+                                        Spacer()
+                                    }.background(.orange)
+                                        .cornerRadius(10)
+                                }.alert(isPresented: $showPullConfirmation, content: {
+                                    if(pullErrorState == 1){
+                                        pullErrorState = 0
+                                        return Alert(
+                                            title: Text("Cloud pull failed"),
+                                            message: Text("Most likely, a dataset with that password doesn't exist. Please publish data to that password first."),
+                                            dismissButton: .default(Text("OK")){
+                                                passwordInput = ""
+                                            }
+                                        )
+                                    }else if(pullErrorState == 2){
+                                        pullErrorState = 0
+                                        return Alert(
+                                            title: Text("Pull succeeded"),
+                                            message: Text("Data was found linked to password \(passwordInput). All transaction data was synced."),
+                                            dismissButton: .default(Text("OK")){
+                                                passwordInput = ""
+                                            }
+                                        )
+                                    }else{
+                                        pullErrorState = 0
+                                        return Alert(
+                                            title: Text("wtf"),
+                                            message: Text("wtf."),
+                                            dismissButton: .default(Text("OK")){
+                                                passwordInput = ""
+                                            }
+                                        )
+                                    }
+                                })
+                            }
+                        }.padding(.horizontal, 18.0)
+                        
                         Group{
                             Text("Set monthly spending limit")
                                 .padding(.top, 10.0)
@@ -161,7 +207,7 @@ struct SettingsView: View {
                             HStack{
                                 Text("Spending limit")
                                     .padding(.trailing, 12.0)
-                                TextField(monthlyLimitAppStorage > 0 ? toPrettyDouble(monthlyLimitAppStorage) : "Enter limit", text: $spendingLimitInput)
+                                TextField(singleton.monthlyLimit > 0 ? toPrettyDouble(singleton.monthlyLimit) : "Enter limit", text: $spendingLimitInput)
                                     .multilineTextAlignment(.trailing)
                                     .keyboardType(.decimalPad)
                                 
@@ -171,7 +217,11 @@ struct SettingsView: View {
                                 .cornerRadius(10)
                             
                             Button(action: {
-                                submitMonthlyLimit(spendingLimitInput)
+                                Task {
+                                    await singleton.submitMonthlyLimit(spendingLimitInput)
+                                    showLimitAlert = true
+                                }
+                                
                             }) {
                                 HStack {
                                     Spacer()
@@ -209,7 +259,10 @@ struct SettingsView: View {
                             
                             Button(action: {
                                 
-                                submitCategory(Category(id: UUID(), name: newCategoryName))
+                                Task {
+                                    await singleton.submitCategory(Category(id: UUID(), name: newCategoryName))
+                                    showCategoryConfirmation = true
+                                }
                             }) {
                                 
                                 HStack {
@@ -252,8 +305,9 @@ struct SettingsView: View {
                                 }.swipeActions(allowsFullSwipe: false) {
                                     
                                     Button(role: .destructive) {
-                                        print("HERE")
-                                        deleteCategory(category.name)
+                                        Task{
+                                            await singleton.deleteCategory(category.name)
+                                        }
                                     } label: {
                                         Label("Delete", systemImage: "trash.fill")
                                     }.tint(.red)

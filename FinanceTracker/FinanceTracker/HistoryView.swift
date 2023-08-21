@@ -92,41 +92,12 @@ struct HistoryView: View {
         return .white
     }
 
-    @AppStorage("jsonTransactions") var jsonTransactions = "[]"
     @State private var showAlert = false
     @State private var selectedTransaction: Transaction? = nil
+    @StateObject private var singleton = FirebaseConnector.singleton
+
     private var transactions: [Transaction] {
-        
-        if let transactionData = jsonTransactions.data(using: .utf8) {
-            do{
-                let decoder = JSONDecoder()
-                let decodedTransactions: [Transaction] = try decoder.decode([Transaction].self, from: transactionData)
-                return decodedTransactions
-            } catch {
-                print("Error decoding JSON: \(error)")
-            }
-        }
-        return []
-    }
-    
-    func deleteTransaction(id: UUID){
-        print("Deleting transaction with id: " + id.uuidString)
-        var newArr:[Transaction] = []
-        for transaction in transactions {
-            if transaction.id != id {
-                newArr.append(transaction)
-            }
-        }
-        assert(newArr.count == transactions.count - 1)
-        do {
-            let encoder = JSONEncoder()
-            let jsonData = try encoder.encode(newArr)
-            if let jsonString = String(data: jsonData, encoding: .utf8) {
-                jsonTransactions = jsonString
-            }
-        } catch {
-            print("Error encoding JSON: \(error)")
-        }
+        return singleton.transactions
     }
     
     private var columnWidths: [CGFloat] {
@@ -192,7 +163,10 @@ struct HistoryView: View {
                                 }.swipeActions(allowsFullSwipe: false) {
 
                                         Button(role: .destructive) {
-                                            deleteTransaction(id: transaction.id)
+                                            
+                                            Task{
+                                                await singleton.deleteTransaction(id: transaction.id)
+                                            }
                                         } label: {
                                             Label("Delete", systemImage: "trash.fill")
                                         }.tint(.red)

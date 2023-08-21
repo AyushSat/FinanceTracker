@@ -8,6 +8,8 @@
 import SwiftUI
 import Charts
 
+
+
 struct Transaction : Identifiable, Codable{
     var id: UUID
     var name = ""
@@ -166,11 +168,10 @@ struct HomeView: View {
     
     @State private var spendingLimitInput:String = ""
 
-    @AppStorage("jsonTransactions") var jsonTransactions = "[]"
-    @AppStorage("categories") var jsonCategories = "[\"Groceries\", \"Rent\", \"Essentials\", \"Dining\", \"Recreation\"]"
-    @AppStorage("monthlyLimit") var monthlyLimitAppStorage = 0.0
-
     @State private var showConfirmationAlert = false
+    
+    @StateObject private var singleton = FirebaseConnector.singleton
+
     
     func formatDate(_ date: Date) -> String {
             let formatter = DateFormatter()
@@ -217,56 +218,12 @@ struct HomeView: View {
     }
     
     private var categories: [Category] {
-        if let jsonData = jsonCategories.data(using: .utf8) {
-            do {
-                let decoder = JSONDecoder()
-                let decodedCategories = try decoder.decode([String].self, from: jsonData)
-                return decodedCategories.map { Category(id: UUID(), name: $0) }
-            } catch {
-                print("Error decoding JSON: \(error)")
-            }
-        }
-        return []
-        
+        return singleton.categories
     }
     
     private var transactions: [Transaction] {
-        
-        if let transactionData = jsonTransactions.data(using: .utf8) {
-            do{
-                let decoder = JSONDecoder()
-                let decodedTransactions: [Transaction] = try decoder.decode([Transaction].self, from: transactionData)
-                return decodedTransactions
-            } catch {
-                print("Error decoding JSON: \(error)")
-            }
-        }
-        return []
+        return singleton.transactions
     }
-    
-    func submitTransaction(_ t: Transaction){
-        if let jsonData = jsonTransactions.data(using: .utf8) {
-            do {
-                let decoder = JSONDecoder()
-                var decodedTransactions = try decoder.decode([Transaction].self, from: jsonData)
-                decodedTransactions.append(t)
-                do {
-                    let encoder = JSONEncoder()
-                    let jsonData = try encoder.encode(decodedTransactions)
-                    if let jsonString = String(data: jsonData, encoding: .utf8) {
-                        jsonTransactions = jsonString
-                        showConfirmationAlert = true
-                    }
-                } catch {
-                    print("Error encoding JSON: \(error)")
-                }
-            } catch {
-                print("Error decoding JSON: \(error)")
-            }
-        }
-    }
-    
-    
     
     
     private var formattedTransactionCost: String {
@@ -366,11 +323,11 @@ struct HomeView: View {
                         .padding(.bottom, 5)
                         
                         HStack {
-                            if(monthlyLimitAppStorage < 1){
+                            if(singleton.monthlyLimit < 1){
                                 Text("You have spent ").font(.title2) + Text("$" + String(totalThisMonth)).font(.title2)                                    .fontWeight(.bold) + Text(" this month.")
                                     .font(.title2)
                             }else {
-                                Text("You have ").font(.title2) + Text("$" + String(monthlyLimitAppStorage - totalThisMonth)).font(.title2)                                    .fontWeight(.bold) + Text(" left for this month.")
+                                Text("You have ").font(.title2) + Text("$" + String(singleton.monthlyLimit - totalThisMonth)).font(.title2)                                    .fontWeight(.bold) + Text(" left for this month.")
                                     .font(.title2)
 
                             }
@@ -437,7 +394,11 @@ struct HomeView: View {
                             
                             
                             if let casted = Double(transactionCost){
-                                submitTransaction(Transaction(id: UUID(), name: transactionName, date: transactionDate, cat: transactionCategory, cost: casted))
+                                
+                                Task {
+                                    await singleton.submitTransaction(Transaction(id: UUID(), name: transactionName, date: transactionDate, cat: transactionCategory, cost: casted))
+                                    showConfirmationAlert = true
+                                }
                             }else{
                                 print("Error, invalid double in string")
                             }
